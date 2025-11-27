@@ -1,38 +1,24 @@
-# ML4SCIENCE
 IMBALMED Inception Runner (mPower audio)
-=======================================
+========================================
 
-Resume rapide
--------------
-- But : generer un CSV image-level par sous-base IMBALMED (subdb1..9) puis lancer `train_model` avec `fold=-1` et `use_fold_column=True` pour faire la CV a l'interieur de chaque subdb.
-- Point d'entree : `src_dp_team/model_audio/inception_imbalmed_runner.py`.
-- Modele : `src_dp_team/model_audio/inception_official_adapted.py` (gere la logique de CV interne).
+What happens, in order
+----------------------
+1) **Scan melSpec images**: read `data/melSpec/*.jpg` into a table with `healthCode, record_id, column_id, image_rel_path`.
+2) **Load labels**: read `data/data_paired/csv/Demographics_Survey.csv`, map `professional-diagnosis` false->0 / true->1.
+3) **Join images + labels**: inner-join on `healthCode` to keep only labeled images.
+4) **Load patient splits**:
+   - Train patients per subdb: `data/data_paired/10_fold_CV/processed_audio/audio_imbalmed_splits/subdb{k}_train_XX_YY.csv`.
+   - Shared val/test patients: `.../common_val_test_all_subdbs.csv`.
+5) **Expand to image-level**:
+   - For each fold (0-9) and subset (train/val/test), duplicate patient rows across all their images.
+   - Keep columns `healthCode, record_id, column_id, image_rel_path, label, fold, subset`.
+   - Write one combined CSV per subdb to `data/data_paired/10_fold_CV/processed_audio/audio_imbalmed_combined/audio_imbalmed_subdb{k}_combined.csv`.
+6) **Train with internal CV**:
+   - `train_model(csv_file=..., fold=-1, config={"use_fold_column": True, ...})` loops over all folds present in the CSV, trains/validates/tests per fold, and writes a CV summary JSON to `outputs/audio_imbalmed/subdb{k}/`.
 
-Emplacements cles
------------------
-- Mel spectrogrammes : `data/melSpec/{healthCode}_{record_id}_{column_id}.jpg`
-- Labels : `data/data_paired/csv/Demographics_Survey.csv` (`professional-diagnosis` -> 0/1)
-- Splits patients IMBALMED : `data/data_paired/10_fold_CV/processed_audio/audio_imbalmed_splits/`
-- CSV combines generes : `data/data_paired/10_fold_CV/processed_audio/audio_imbalmed_combined/audio_imbalmed_subdb{k}_combined.csv`
-- Sorties entrainement : `outputs/audio_imbalmed/subdb{k}/`
-
-Pipeline pas a pas
-------------------
-1) Indexer les images : scan de `data/melSpec` -> tableau `healthCode, record_id, column_id, image_rel_path`.
-2) Charger les labels : `Demographics_Survey.csv` -> `healthCode, label` (false->0, true->1).
-3) Joindre images + labels -> base image-level.
-4) Expansion des splits patients :
-   - `subdb{k}_train_XX_YY.csv` fournit les patients train par fold.
-   - `common_val_test_all_subdbs.csv` fournit val/test par fold.
-   - On repique chaque patient sur toutes ses images, on garde `fold` (0-9) et `subset` (train/val/test).
-   - Resultat : un CSV combine par subdb avec toutes les folds.
-5) Entrainement :
-   - Appel unique `train_model(csv_file=..., fold=-1, config={"use_fold_column": True, ...})`.
-   - `train_model` boucle sur les folds presents dans la colonne `fold`, entraine/evalue et ecrit un resume CV JSON.
-
-Apercu des tables (5 premieres lignes)
---------------------------------------
-- Index melSpec scanne
+Table previews (first 5 rows)
+-----------------------------
+- Scanned melSpec index
 ```
 healthCode,record_id,column_id,image_rel_path
 00081bd9-9abd-4003-b035-de6cc3e8c922,f5f9fe7a-16ea-4729-ad36-4adf16d640d3,audio_audio_m4a,data/melSpec/00081bd9-9abd-4003-b035-de6cc3e8c922_f5f9fe7a-16ea-4729-ad36-4adf16d640d3_audio_audio_m4a.jpg
@@ -42,7 +28,7 @@ healthCode,record_id,column_id,image_rel_path
 0160664a-f4af-4071-a4aa-2967f3ea0503,128091f2-7350-4f48-99fe-c99137e6c94d,audio_audio_m4a,data/melSpec/0160664a-f4af-4071-a4aa-2967f3ea0503_128091f2-7350-4f48-99fe-c99137e6c94d_audio_audio_m4a.jpg
 ```
 
-- Labels Demographics_Survey
+- Labels (Demographics_Survey)
 ```
 healthCode,professional-diagnosis
 639e8a78-3631-4231-bda1-c911c1b169e5,False
@@ -52,7 +38,7 @@ healthCode,professional-diagnosis
 45b4e2ca-8d15-4736-828c-829e3d4177f4,False
 ```
 
-- Split patients train (ex: subdb1)
+- Patient split train (example: subdb1)
 ```
 fold_iteration,healthCode,subset
 0,00081bd9-9abd-4003-b035-de6cc3e8c922,train
@@ -62,7 +48,7 @@ fold_iteration,healthCode,subset
 0,02c7f33f-0dd9-41e1-adee-1d6f107c87a2,train
 ```
 
-- Split commun val/test (tous subdb)
+- Shared val/test split (all subdbs)
 ```
 fold_iteration,healthCode,subset
 0,01fa5bda-f11e-47ef-94c6-37697ad26a86,val
@@ -72,7 +58,7 @@ fold_iteration,healthCode,subset
 0,13627002-073b-4366-8889-9561789c51be,val
 ```
 
-- CSV combine genere (ex: subdb1)
+- Generated combined CSV (example: subdb1)
 ```
 healthCode,health_code,record_id,column_id,image_rel_path,label,fold,subset
 03d50e89-143a-4084-bc25-4b13077ff381,03d50e89-143a-4084-bc25-4b13077ff381,9fa3d979-15dd-42ee-8b9e-8b3c547abbcf,audio_audio_m4a,data/melSpec/03d50e89-143a-4084-bc25-4b13077ff381_9fa3d979-15dd-42ee-8b9e-8b3c547abbcf_audio_audio_m4a.jpg,0,0,test
@@ -82,14 +68,14 @@ healthCode,health_code,record_id,column_id,image_rel_path,label,fold,subset
 03d50e89-143a-4084-bc25-4b13077ff381,03d50e89-143a-4084-bc25-4b13077ff381,a7a08553-218e-4114-979c-655120886dc7,audio_audio_m4a,data/melSpec/03d50e89-143a-4084-bc25-4b13077ff381_a7a08553-218e-4114-979c-655120886dc7_audio_audio_m4a.jpg,0,0,test
 ```
 
-Commandes utiles
-----------------
-- Construire CSVs + entrainer toutes les subdbs avec CV interne :
+How to run
+----------
+- Build CSVs + train all subdbs with internal CV:
   `python src_dp_team/model_audio/inception_imbalmed_runner.py --epochs 50 --batch-size 32 --overwrite`
-- Limiter a certaines subdbs :
+- Limit to selected subdbs:
   `python src_dp_team/model_audio/inception_imbalmed_runner.py --subdbs 1 2 5 --overwrite`
 
 Notes
 -----
-- `--overwrite` force la regeneration des CSV combines (utile si des folds manquaient).
-- `train_model` produit un recap CV par methode : `outputs/audio_imbalmed/subdb{k}/{method}_cv_summary.json`.
+- `--overwrite` forces regeneration of combined CSVs (useful if folds were missing).
+- `train_model` writes a CV summary per method: `outputs/audio_imbalmed/subdb{k}/{method}_cv_summary.json`.
